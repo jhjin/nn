@@ -89,6 +89,7 @@ include('VolumetricMaxPooling.lua')
 
 include('HorizontalConvolution.lua')
 include('VerticalConvolution.lua')
+include('LateralConvolution.lua')
 
 include('ParallelTable.lua')
 include('ConcatTable.lua')
