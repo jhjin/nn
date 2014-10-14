@@ -87,6 +87,8 @@ include('SpatialConvolutionOneToOneMM.lua')
 include('VolumetricConvolution.lua')
 include('VolumetricMaxPooling.lua')
 
+include('HorizontalConvolution.lua')
+
 include('ParallelTable.lua')
 include('ConcatTable.lua')
 include('SplitTable.lua')
