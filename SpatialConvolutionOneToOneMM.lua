@@ -31,7 +31,7 @@ function SpatialConvolutionOneToOneMM:reset(stdv)
    if stdv then
       stdv = stdv * math.sqrt(3)
    else
-      stdv = 1/math.sqrt(self.kW*self.kH*self.nInputPlane)
+      stdv = 1/math.sqrt(self.kW*self.kH)
    end
    if nn.oldSeed then
       self.weight:apply(function()
