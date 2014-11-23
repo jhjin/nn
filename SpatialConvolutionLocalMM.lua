@@ -10,7 +10,7 @@ function SpatialConvolutionLocalMM:__init(nInputPlane, nOutputPlane, kW, kH, kC,
    self.nOutputPlane = nOutputPlane
    self.kW = kW
    self.kH = kH
-   self.kC = math.min(kC, nInputPlane)
+   self.kC = kC
 
    self.dW = dW
    self.dH = dH
@@ -24,7 +24,7 @@ function SpatialConvolutionLocalMM:__init(nInputPlane, nOutputPlane, kW, kH, kC,
    self.finput = torch.Tensor()
    self.fgradInput = torch.Tensor()
 
-   self.w_indicator = torch.range(0,nOutputPlane-1):mul(nInputPlane-self.kC):div(nOutputPlane-1):round()
+   self.w_indicator = torch.range(0,nOutputPlane-1):mul(nInputPlane-kC):div(math.max(1,nOutputPlane-1)):round()
 
    self:reset()
 end

@@ -116,9 +116,6 @@
 #include "generic/SpatialUpSamplingNearest.c"
 #include "THGenerateFloatTypes.h"
 
-#include "generic/SpatialConvolutionOneToOneMM.c"
-#include "THGenerateFloatTypes.h"
-
 #include "generic/SpatialConvolutionLocalMM.c"
 #include "THGenerateFloatTypes.h"
 
@@ -167,7 +164,6 @@ int luaopen_libnn(lua_State *L)
   nn_FloatMultiLabelMarginCriterion_init(L);
   nn_FloatL1Cost_init(L);
   nn_FloatSpatialUpSamplingNearest_init(L);
-  nn_FloatSpatialConvolutionOneToOneMM_init(L);
   nn_FloatSpatialConvolutionLocalMM_init(L);
 
   nn_DoubleMin_init(L);
@@ -207,7 +203,6 @@ int luaopen_libnn(lua_State *L)
   nn_DoubleMultiLabelMarginCriterion_init(L);
   nn_DoubleL1Cost_init(L);
   nn_DoubleSpatialUpSamplingNearest_init(L);
-  nn_DoubleSpatialConvolutionOneToOneMM_init(L);
   nn_DoubleSpatialConvolutionLocalMM_init(L);
 
   return 1;
