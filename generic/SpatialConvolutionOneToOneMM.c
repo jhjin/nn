@@ -19,17 +19,8 @@ static void nn_(SpatialConvolutionOneToOneMM_updateOutput_frame)(THTensor *input
   for(i = 0; i < nOutputPlane; i++)
     THVector_(fill)(output->storage->data+output->storageOffset+output->stride[0]*i, THTensor_(get1d)(bias, i), outputHeight*outputWidth);
 
-  for(i = 0; i < nOutputPlane; i++) {
-    THTensor *weight_t = THTensor_(newNarrow)(weight, 0, i, 1);
-    THTensor *finput_t = THTensor_(newNarrow)(finput, 0, i*kH*kW, kH*kW);
-    THTensor *output2d_t = THTensor_(newNarrow)(output2d, 0, i, 1);
+  THTensor_(addmm)(output2d, 1, output2d, 1, weight, finput);
 
-    THTensor_(addmm)(output2d_t, 1, output2d_t, 1, weight_t, finput_t);
-
-    THTensor_(free)(finput_t);
-    THTensor_(free)(weight_t);
-    THTensor_(free)(output2d_t);
-  }
   THTensor_(free)(output2d);
 }
 
@@ -77,6 +68,14 @@ static int nn_(SpatialConvolutionOneToOneMM_updateOutput)(lua_State *L)
   outputWidth  = (inputWidth + 2*padding - kW) / dW + 1;
   outputHeight = (inputHeight + 2*padding - kH) / dH + 1;
 
+  // zero cross-layer weights
+  long i;
+  for(i = 0; i < nOutputPlane-1; i++) // lower triangular
+    THVector_(fill)(weight->storage->data + weight->storageOffset + weight->stride[0]*(i+1), 0, (i+1)*kH*kW);
+
+  for(i = 0; i < nOutputPlane-1; i++) // upper triangular
+    THVector_(fill)(weight->storage->data + weight->storageOffset + weight->stride[0]*i + kH*kW*(i+1), 0, weight->size[1]-(i+1)*kH*kW);
+
   if(input->nDimension == 3)
   {
     THTensor_(resize2d)(finput, kW*kH*nInputPlane, outputHeight*outputWidth);
@@ -98,7 +97,6 @@ static int nn_(SpatialConvolutionOneToOneMM_updateOutput)(lua_State *L)
     THStorage_(clearFlag)(input->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(output->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(finput->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(clearFlag)(weight->storage, TH_STORAGE_REFCOUNTED);
 
 #pragma omp parallel for private(t)
     for(t = 0; t < T; t++)
@@ -119,7 +117,6 @@ static int nn_(SpatialConvolutionOneToOneMM_updateOutput)(lua_State *L)
     THStorage_(setFlag)(input->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(output->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(finput->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(setFlag)(weight->storage, TH_STORAGE_REFCOUNTED);
   }
 
   return 1;
@@ -129,23 +126,10 @@ static int nn_(SpatialConvolutionOneToOneMM_updateOutput)(lua_State *L)
 static void nn_(SpatialConvolutionOneToOneMM_updateGradInput_frame)(THTensor *gradInput, THTensor *gradOutput, THTensor *weight, THTensor *fgradInput,
                                                             int kW, int kH, int dW, int dH, int padding)
 {
-  long i;
   THTensor *gradOutput2d = THTensor_(newWithStorage2d)(gradOutput->storage, gradOutput->storageOffset,
                                                        gradOutput->size[0], -1,
                                                        gradOutput->size[1]*gradOutput->size[2], -1);
-
-  for(i = 0; i < gradOutput->size[0]; i++) {
-    THTensor *weight_t = THTensor_(newNarrow)(weight, 1, i, 1);
-    THTensor *fgradInput_t = THTensor_(newNarrow)(fgradInput, 0, i*kH*kW, kH*kW);
-    THTensor *gradOutput2d_t = THTensor_(newNarrow)(gradOutput2d, 0, i, 1);
-
-    THTensor_(addmm)(fgradInput_t, 0, fgradInput_t, 1, weight_t, gradOutput2d_t);
-
-    THTensor_(free)(weight_t);
-    THTensor_(free)(fgradInput_t);
-    THTensor_(free)(gradOutput2d_t);
-  }
-
+  THTensor_(addmm)(fgradInput, 0, fgradInput, 1, weight, gradOutput2d);
   THTensor_(free)(gradOutput2d);
 
   THTensor_(zero)(gradInput);
@@ -173,13 +157,11 @@ static int nn_(SpatialConvolutionOneToOneMM_updateGradInput)(lua_State *L)
 
   THTensor_(resizeAs)(gradInput, input);
   THTensor_(resizeAs)(fgradInput, finput);
-
   THTensor_(transpose)(weight, weight, 0, 1);
 
   if(input->nDimension == 3)
   {
     nn_(SpatialConvolutionOneToOneMM_updateGradInput_frame)(gradInput, gradOutput, weight, fgradInput, kW, kH, dW, dH, padding);
-
   }
   else
   {
@@ -189,7 +171,6 @@ static int nn_(SpatialConvolutionOneToOneMM_updateGradInput)(lua_State *L)
     THStorage_(clearFlag)(gradInput->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(gradOutput->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(fgradInput->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(clearFlag)(weight->storage, TH_STORAGE_REFCOUNTED);
 
 #pragma omp parallel for private(t)
     for(t = 0; t < T; t++)
@@ -208,7 +189,6 @@ static int nn_(SpatialConvolutionOneToOneMM_updateGradInput)(lua_State *L)
     THStorage_(setFlag)(gradInput->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(gradOutput->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(fgradInput->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(setFlag)(weight->storage, TH_STORAGE_REFCOUNTED);
   }
 
   THTensor_(transpose)(weight, weight, 0, 1);
@@ -224,20 +204,9 @@ static void nn_(SpatialConvolutionOneToOneMM_accGradParameters_frame)(THTensor *
   THTensor *gradOutput2d = THTensor_(newWithStorage2d)(gradOutput->storage, gradOutput->storageOffset,
                                                        gradOutput->size[0], -1,
                                                        gradOutput->size[1]*gradOutput->size[2], -1);
+
   THTensor_(transpose)(finput, finput, 0, 1);
-
-  for(i = 0; i < gradOutput->size[0]; i++) {
-    THTensor *finput_t = THTensor_(newNarrow)(finput, 1, i*gradWeight->size[1], gradWeight->size[1]);
-    THTensor *gradWeight_t = THTensor_(newNarrow)(gradWeight, 0, i, 1);
-    THTensor *gradOutput2d_t = THTensor_(newNarrow)(gradOutput2d, 0, i, 1);
-
-    THTensor_(addmm)(gradWeight_t, 1, gradWeight_t, scale, gradOutput2d_t, finput_t);
-
-    THTensor_(free)(finput_t);
-    THTensor_(free)(gradWeight_t);
-    THTensor_(free)(gradOutput2d_t);
-  }
-
+  THTensor_(addmm)(gradWeight, 1, gradWeight, scale, gradOutput2d, finput);
   THTensor_(transpose)(finput, finput, 0, 1);
 
   for(i = 0; i < gradBias->size[0]; i++)
@@ -260,6 +229,8 @@ static int nn_(SpatialConvolutionOneToOneMM_accGradParameters)(lua_State *L)
   THTensor *gradOutput = luaT_checkudata(L, 3, torch_Tensor);
   real scale = luaL_optnumber(L, 4, 1);
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
+  int kW = luaT_getfieldcheckint(L, 1, "kW");
+  int kH = luaT_getfieldcheckint(L, 1, "kH");
 
   THTensor *finput = luaT_getfieldcheckudata(L, 1, "finput", torch_Tensor);
   THTensor *gradWeight = luaT_getfieldcheckudata(L, 1, "gradWeight", torch_Tensor);
@@ -287,6 +258,14 @@ static int nn_(SpatialConvolutionOneToOneMM_accGradParameters)(lua_State *L)
       THTensor_(free)(finput_t);
     }
   }
+
+  // zero cross-layer weights
+  long i;
+  for(i = 0; i < nOutputPlane-1; i++) // lower triangular
+    THVector_(fill)(gradWeight->storage->data + gradWeight->storageOffset + gradWeight->stride[0]*(i+1), 0, (i+1)*kH*kW);
+
+  for(i = 0; i < nOutputPlane-1; i++) // upper triangular
+    THVector_(fill)(gradWeight->storage->data + gradWeight->storageOffset + gradWeight->stride[0]*i + kH*kW*(i+1), 0, gradWeight->size[1]-(i+1)*kH*kW);
 
   return 0;
 }

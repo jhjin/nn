@@ -16,9 +16,9 @@ function SpatialConvolutionOneToOneMM:__init(nInputPlane, nOutputPlane, kW, kH, 
    self.dH = dH
    self.padding = padding or 0
 
-   self.weight = torch.Tensor(nOutputPlane, kH*kW)
+   self.weight = torch.Tensor(nOutputPlane, nInputPlane*kH*kW)
    self.bias = torch.Tensor(nOutputPlane)
-   self.gradWeight = torch.Tensor(nOutputPlane, kH*kW)
+   self.gradWeight = torch.Tensor(nOutputPlane, nInputPlane*kH*kW)
    self.gradBias = torch.Tensor(nOutputPlane)
 
    self.finput = torch.Tensor()
