@@ -150,17 +150,38 @@ static int nn_(SpatialConvolutionLocalMM_updateGradInput)(lua_State *L)
   THTensor *gradOutput = luaT_checkudata(L, 3, torch_Tensor);
   int kW = luaT_getfieldcheckint(L, 1, "kW");
   int kH = luaT_getfieldcheckint(L, 1, "kH");
+  int kC = luaT_getfieldcheckint(L, 1, "kC");
   int dW = luaT_getfieldcheckint(L, 1, "dW");
   int dH = luaT_getfieldcheckint(L, 1, "dH");
   int padding = luaT_getfieldcheckint(L, 1, "padding");
   int nOutputPlane = luaT_getfieldcheckint(L, 1, "nOutputPlane");
+  int cec = luaT_getfieldcheckboolean(L, 1, "cec");
+
+  THTensor *w_indicator = luaT_getfieldcheckudata(L, 1, "w_indicator", torch_Tensor);
+  real *w_ind = THTensor_(data)(w_indicator);
 
   THTensor *finput = luaT_getfieldcheckudata(L, 1, "finput", torch_Tensor);
   THTensor *fgradInput = luaT_getfieldcheckudata(L, 1, "fgradInput", torch_Tensor);
-  THTensor *weight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
+  THTensor *weight = NULL;
+  if (cec == 1) {
+    weight = luaT_getfieldcheckudata(L, 1, "cecWeight", torch_Tensor);
+  } else {
+    weight = luaT_getfieldcheckudata(L, 1, "weight", torch_Tensor);
+  }
   THTensor *gradInput = luaT_getfieldcheckudata(L, 1, "gradInput", torch_Tensor);
 
   THArgCheck( nOutputPlane == gradOutput->size[input->nDimension == 4 ? 1 : 0], 1, "Number of output features is not equal to nOutputPlane" );
+
+  // zero cross-layer weights
+  long i;
+  for(i = 0; i < nOutputPlane; i++) // lower triangular
+    THVector_(fill)(weight->storage->data + weight->storageOffset + weight->stride[0]*i,
+                    0, ((int)w_ind[i])*kH*kW);
+
+  for(i = 0; i < nOutputPlane; i++) // upper triangular
+    THVector_(fill)(weight->storage->data + weight->storageOffset + weight->stride[0]*i +
+                    ((int)w_ind[i]+kC)*kH*kW,
+                    0, weight->size[1]-((int)w_ind[i]+kC)*kH*kW);
 
   THTensor_(resizeAs)(gradInput, input);
   THTensor_(resizeAs)(fgradInput, finput);

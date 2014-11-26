@@ -1,6 +1,6 @@
 local SpatialConvolutionLocalMM, parent = torch.class('nn.SpatialConvolutionLocalMM', 'nn.Module')
 
-function SpatialConvolutionLocalMM:__init(nInputPlane, nOutputPlane, kW, kH, kC, dW, dH, padding)
+function SpatialConvolutionLocalMM:__init(nInputPlane, nOutputPlane, kW, kH, kC, dW, dH, padding, cec)
    parent.__init(self)
 
    dW = dW or 1
@@ -15,11 +15,13 @@ function SpatialConvolutionLocalMM:__init(nInputPlane, nOutputPlane, kW, kH, kC,
    self.dW = dW
    self.dH = dH
    self.padding = padding or 0
+   self.cec = (cec and true) or false
 
    self.weight = torch.Tensor(nOutputPlane, nInputPlane*kH*kW)
    self.bias = torch.Tensor(nOutputPlane)
    self.gradWeight = torch.Tensor(nOutputPlane, nInputPlane*kH*kW)
    self.gradBias = torch.Tensor(nOutputPlane)
+   self.cecWeight = (self.cec and torch.Tensor(nOutputPlane, nInputPlane*kH*kW):fill(cec)) or nil
 
    self.finput = torch.Tensor()
    self.fgradInput = torch.Tensor()
