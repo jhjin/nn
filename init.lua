@@ -83,6 +83,7 @@ include('SpatialContrastiveNormalization.lua')
 include('SpatialZeroPadding.lua')
 include('SpatialUpSamplingNearest.lua')
 include('SpatialConvolutionLocalMM.lua')
+include('SpatialFlattenedConvolution.lua')
 
 include('VolumetricConvolution.lua')
 include('VolumetricMaxPooling.lua')
