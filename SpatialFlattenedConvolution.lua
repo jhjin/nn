@@ -23,11 +23,8 @@ function SpatialFlattenedConvolution:__init(nInputPlane, nOutputPlane, kW, kH, d
    self.bias_v = torch.Tensor(nOutputPlane)
    self.bias_h = torch.Tensor(nOutputPlane)
 
-   self.tmp_l = torch.Tensor()
-   self.tmp_v = torch.Tensor()
-
-   self.finput_v = torch.Tensor()
-   self.finput_h = torch.Tensor()
+   self.intm1 = torch.Tensor()
+   self.intm2 = torch.Tensor()
 
    self:reset()
 end

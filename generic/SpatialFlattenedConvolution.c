@@ -2,94 +2,74 @@
 #define TH_GENERIC_FILE "generic/SpatialFlattenedConvolution.c"
 #else
 
-static void nn_(unfolded_copy2)(THTensor *finput, THTensor *input,
-                               int kW, int kH,
-                               int dW, int dH,
-                               int padding,
-                               int nInputPlane,
-                               int inputWidth, int inputHeight,
-                               int outputWidth, int outputHeight)
+static void nn_(conv_1d)(real *y, real *x, real *w, int iC, int iH, int iW, int kL, int horizontal)
 {
-  long k;
-  real *input_data = THTensor_(data)(input);
-  real *finput_data = THTensor_(data)(finput);
+  long i, j, k;
 
-#pragma omp parallel for private(k)
-  for(k = 0; k < nInputPlane*kH*kW; k++) {
-    int nip = k / (kH*kW);
-    int rest = k % (kH*kW);
-    int kh = rest / kW;
-    int kw = rest % kW;
-    int x,y,ix,iy;
-    real *dst = finput_data + nip*(kH*kW*outputHeight*outputWidth) + kh*(kW*outputHeight*outputWidth) + kw*(outputHeight*outputWidth);
-    real *src = input_data + nip*(inputHeight*inputWidth);
-    for(y = 0; y < outputHeight; y++) {
-      iy = y + kh;
-      ix = 0 + kw;
-      memcpy(dst+y*outputWidth, src+iy*inputWidth+ix, sizeof(real)*outputWidth);
+  // horizontal convolution
+  if (horizontal) {
+    int oH = iH;
+    int oW = iW - kL + 1;
+    for(i = 0; i < iC; i++) {
+      for(j = 0; j < iH; j++) {
+        for(k = 0; k < kL; k++) {
+          THVector_(add)(y+i*oH*oW+j*oW, x+i*iH*iW+j*iW+k, *(w+i*kL+k), oW);
+        }
+      }
+    }
+
+  // vertical convolution
+  } else {
+    int oH = iH - kL + 1;
+    int oW = iW;
+    for(i = 0; i < iC; i++) {
+      for(k = 0; k < kL; k++) {
+        THVector_(add)(y+i*oH*oW, x+i*iH*iW+k*iW, *(w+i*kL+k), oH*oW);
+      }
     }
   }
+
+  return;
 }
 
-static void nn_(SpatialFlattenedConvolution_updateOutput_frame)(THTensor *input, THTensor *output,
-                                                                THTensor *tmp_l, THTensor *tmp_v,
-                                                                THTensor *finput_v, THTensor *finput_h,
-                                                                THTensor *weight_l, THTensor *weight_v, THTensor *weight_h,
-                                                                THTensor *bias_l, THTensor *bias_v, THTensor *bias_h,
-                                                                int kW, int kH, int dW, int dH, int padding,
-                                                                long nInputPlane, long inputWidth, long inputHeight,
-                                                                long nOutputPlane, long outputWidth, long outputHeight)
+static void nn_(SpatialFlattenedConvolution_updateOutput_frame2)(THTensor *input, THTensor *output,
+                                                                 THTensor *intm1, THTensor *intm2,
+                                                                 THTensor *weight_l, THTensor *weight_v, THTensor *weight_h,
+                                                                 THTensor *bias_l, THTensor *bias_v, THTensor *bias_h,
+                                                                 int kW, int kH, int dW, int dH, int padding,
+                                                                 long nInputPlane, long inputWidth, long inputHeight,
+                                                                 long nOutputPlane, long outputWidth, long outputHeight)
 {
-  long i;
+  long i, j, k;
   THTensor *input2d, *output2d;
 
-  input2d = THTensor_(newWithStorage2d)(input->storage, input->storageOffset, nInputPlane, -1, inputHeight*inputWidth, -1);
-  output2d = THTensor_(newWithStorage2d)(output->storage, output->storageOffset, nOutputPlane, -1, outputHeight*outputWidth, -1);
+  input2d = THTensor_(newWithStorage2d)(input->storage, input->storageOffset,
+                                        nInputPlane, -1, inputHeight*inputWidth, -1);
+  output2d = THTensor_(newWithStorage2d)(output->storage, output->storageOffset,
+                                         nOutputPlane, -1, outputHeight*outputWidth, -1);
+
+
+  // fill biases
+  for(i = 0; i < nOutputPlane; i++) {
+    THVector_(fill)(intm1->storage->data+intm1->storageOffset+intm1->stride[0]*i,
+                    THTensor_(get1d)(bias_l, i), inputHeight*inputWidth);
+    THVector_(fill)(intm2->storage->data+intm2->storageOffset+intm2->stride[0]*i,
+                    THTensor_(get1d)(bias_v, i), outputHeight*inputWidth);
+    THVector_(fill)(output->storage->data+output->storageOffset+output->stride[0]*i,
+                    THTensor_(get1d)(bias_h, i), outputHeight*outputWidth);
+  }
 
 
   // Lateral convolution
-  for(i = 0; i < nOutputPlane; i++)
-    THVector_(fill)(tmp_l->storage->data+tmp_l->storageOffset+tmp_l->stride[0]*i, THTensor_(get1d)(bias_l, i), inputHeight*inputWidth);
-
-  THTensor_(addmm)(tmp_l, 1, tmp_l, 1, weight_l, input2d);
-
+  THTensor_(addmm)(intm1, 1, intm1, 1, weight_l, input2d);
 
   // Vertical convolution
-  nn_(unfolded_copy2)(finput_v, tmp_l, 1, kH, 1, dH, padding, nOutputPlane, inputWidth, inputHeight, inputWidth, outputHeight);
-
-  for(i = 0; i < nOutputPlane; i++)
-    THVector_(fill)(tmp_v->storage->data+tmp_v->storageOffset+tmp_v->stride[0]*i, THTensor_(get1d)(bias_v, i), outputHeight*inputWidth);
-
-  for(i = 0; i < nOutputPlane; i++) {
-    THTensor *a = THTensor_(newWithStorage2d)(weight_v->storage, weight_v->storageOffset+weight_v->stride[0]*i, 1, -1, kH, -1);
-    THTensor *b = THTensor_(newWithStorage2d)(finput_v->storage, finput_v->storageOffset+finput_v->stride[0]*i*kH, kH, -1, outputHeight*inputWidth, -1);
-    THTensor *c = THTensor_(newWithStorage2d)(tmp_v->storage, tmp_v->storageOffset+tmp_v->stride[0]*i, 1, -1, outputHeight*inputWidth, -1);
-
-    THTensor_(addmm)(c, 1, c, 1, a, b); // 2x15
-
-    THTensor_(free)(a);
-    THTensor_(free)(b);
-    THTensor_(free)(c);
-  }
-
+  nn_(conv_1d)(THTensor_(data)(intm2), THTensor_(data)(intm1), THTensor_(data)(weight_v),
+               nOutputPlane, inputHeight, inputWidth, kW, 0);
 
   // Horizontal convolution
-  nn_(unfolded_copy2)(finput_h, tmp_v, kW, 1, dW, 1, padding, nOutputPlane, inputWidth, outputHeight, outputWidth, outputHeight);
-
-  for(i = 0; i < nOutputPlane; i++)
-    THVector_(fill)(output->storage->data+output->storageOffset+output->stride[0]*i, THTensor_(get1d)(bias_h, i), outputHeight*outputWidth);
-
-  for(i = 0; i < nOutputPlane; i++) {
-    THTensor *a = THTensor_(newWithStorage2d)(weight_h->storage, weight_h->storageOffset+weight_h->stride[0]*i, 1, -1, kW, -1);
-    THTensor *b = THTensor_(newWithStorage2d)(finput_h->storage, finput_h->storageOffset+finput_h->stride[0]*i*kW, kH, -1, outputHeight*outputWidth, -1);
-    THTensor *c = THTensor_(newWithStorage2d)(output2d->storage, output2d->storageOffset+output2d->stride[0]*i, 1, -1, outputHeight*outputWidth, -1);
-
-    THTensor_(addmm)(c, 1, c, 1, a, b); // 2x15
-
-    THTensor_(free)(a);
-    THTensor_(free)(b);
-    THTensor_(free)(c);
-  }
+  nn_(conv_1d)(THTensor_(data)(output), THTensor_(data)(intm2), THTensor_(data)(weight_h),
+               nOutputPlane, outputHeight, inputWidth, kH, 1);
 
 
   THTensor_(free)(input2d);
@@ -111,10 +91,8 @@ static int nn_(SpatialFlattenedConvolution_updateOutput)(lua_State *L)
   THTensor *bias_l = luaT_getfieldcheckudata(L, 1, "bias_l", torch_Tensor);
   THTensor *bias_v = luaT_getfieldcheckudata(L, 1, "bias_v", torch_Tensor);
   THTensor *bias_h = luaT_getfieldcheckudata(L, 1, "bias_h", torch_Tensor);
-  THTensor *tmp_l = luaT_getfieldcheckudata(L, 1, "tmp_l", torch_Tensor);
-  THTensor *tmp_v = luaT_getfieldcheckudata(L, 1, "tmp_v", torch_Tensor);
-  THTensor *finput_v = luaT_getfieldcheckudata(L, 1, "finput_v", torch_Tensor);
-  THTensor *finput_h = luaT_getfieldcheckudata(L, 1, "finput_h", torch_Tensor);
+  THTensor *intm1 = luaT_getfieldcheckudata(L, 1, "intm1", torch_Tensor);
+  THTensor *intm2 = luaT_getfieldcheckudata(L, 1, "intm2", torch_Tensor);
   THTensor *output = luaT_getfieldcheckudata(L, 1, "output", torch_Tensor);
 
   int dimf = 0;
@@ -149,13 +127,11 @@ static int nn_(SpatialFlattenedConvolution_updateOutput)(lua_State *L)
 
   if(input->nDimension == 3)
   {
-    THTensor_(resize2d)(finput_v, kH*nOutputPlane, outputHeight*inputWidth);
-    THTensor_(resize2d)(finput_h, kW*nOutputPlane, outputHeight*outputWidth);
-    THTensor_(resize2d)(tmp_l, nOutputPlane, inputHeight*inputWidth);
-    THTensor_(resize2d)(tmp_v, nOutputPlane, outputHeight*inputWidth);
+    THTensor_(resize2d)(intm1, nOutputPlane, inputHeight*inputWidth);
+    THTensor_(resize2d)(intm2, nOutputPlane, outputHeight*inputWidth);
     THTensor_(resize3d)(output, nOutputPlane, outputHeight, outputWidth);
 
-    nn_(SpatialFlattenedConvolution_updateOutput_frame)(input, output, tmp_l, tmp_v, finput_v, finput_h,
+    nn_(SpatialFlattenedConvolution_updateOutput_frame2)(input, output, intm1, intm2,
                                                         weight_l, weight_v, weight_h,
                                                         bias_l, bias_v, bias_h,
                                                         kW, kH, dW, dH, padding,
@@ -167,18 +143,14 @@ static int nn_(SpatialFlattenedConvolution_updateOutput)(lua_State *L)
     long T = input->size[0];
     long t;
 
-    THTensor_(resize3d)(finput_v, T, kH*nOutputPlane, outputHeight*inputWidth);
-    THTensor_(resize3d)(finput_h, T, kW*nOutputPlane, outputHeight*outputWidth);
-    THTensor_(resize3d)(tmp_l, T, nOutputPlane, inputHeight*inputWidth);
-    THTensor_(resize3d)(tmp_v, T, nOutputPlane, outputHeight*inputWidth);
+    THTensor_(resize3d)(intm1, T, nOutputPlane, inputHeight*inputWidth);
+    THTensor_(resize3d)(intm2, T, nOutputPlane, outputHeight*inputWidth);
     THTensor_(resize4d)(output, T, nOutputPlane, outputHeight, outputWidth);
 
-    THStorage_(clearFlag)(finput_v->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(clearFlag)(finput_h->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(input->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(output->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(clearFlag)(tmp_l->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(clearFlag)(tmp_v->storage, TH_STORAGE_REFCOUNTED);
+    THStorage_(clearFlag)(intm1->storage, TH_STORAGE_REFCOUNTED);
+    THStorage_(clearFlag)(intm2->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(weight_l->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(weight_v->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(clearFlag)(weight_h->storage, TH_STORAGE_REFCOUNTED);
@@ -186,35 +158,28 @@ static int nn_(SpatialFlattenedConvolution_updateOutput)(lua_State *L)
 #pragma omp parallel for private(t)
     for(t = 0; t < T; t++)
     {
-      THTensor *finput_v_t = THTensor_(newSelect)(finput_v, 0, t);
-      THTensor *finput_h_t = THTensor_(newSelect)(finput_h, 0, t);
       THTensor *input_t = THTensor_(newSelect)(input, 0, t);
       THTensor *output_t = THTensor_(newSelect)(output, 0, t);
-      THTensor *tmp_l_t = THTensor_(newSelect)(tmp_l, 0, t);
-      THTensor *tmp_v_t = THTensor_(newSelect)(tmp_v, 0, t);
+      THTensor *intm1_t = THTensor_(newSelect)(intm1, 0, t);
+      THTensor *intm2_t = THTensor_(newSelect)(intm2, 0, t);
 
-      nn_(SpatialFlattenedConvolution_updateOutput_frame)(input_t, output_t,
-                                                          tmp_l_t, tmp_v_t,
-                                                          finput_v_t, finput_h_t,
+      nn_(SpatialFlattenedConvolution_updateOutput_frame2)(input_t, output_t,
+                                                          intm1_t, intm2_t,
                                                           weight_l, weight_v, weight_h,
                                                           bias_l, bias_v, bias_h,
                                                           kW, kH, dW, dH, padding,
                                                           nInputPlane, inputWidth, inputHeight,
                                                           nOutputPlane, outputWidth, outputHeight);
 
-      THTensor_(free)(finput_v_t);
-      THTensor_(free)(finput_h_t);
       THTensor_(free)(input_t);
       THTensor_(free)(output_t);
-      THTensor_(free)(tmp_l_t);
-      THTensor_(free)(tmp_v_t);
+      THTensor_(free)(intm1_t);
+      THTensor_(free)(intm2_t);
     }
-    THStorage_(setFlag)(finput_v->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(setFlag)(finput_h->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(input->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(output->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(setFlag)(tmp_l->storage, TH_STORAGE_REFCOUNTED);
-    THStorage_(setFlag)(tmp_v->storage, TH_STORAGE_REFCOUNTED);
+    THStorage_(setFlag)(intm1->storage, TH_STORAGE_REFCOUNTED);
+    THStorage_(setFlag)(intm2->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(weight_l->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(weight_v->storage, TH_STORAGE_REFCOUNTED);
     THStorage_(setFlag)(weight_h->storage, TH_STORAGE_REFCOUNTED);
